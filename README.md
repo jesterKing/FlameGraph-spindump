@@ -1,22 +1,42 @@
-This project visualizes stack traces in hang and spin reports on Mac OS X.  It aims to solve the following problem: it's hard to pinpoint quickly a function where the most time is spent in a big stack trace.  Big means more than 2 screens long.
+This project visualizes stack traces in hang and spin reports created through
+the Activity Monitor on MacOS.
 
-The project is **heavily** inspired by remarkable [brendangregg/FlameGraph](https://github.com/brendangregg/FlameGraph).  But I am implementing everything from scratch in Python, that's why I'm not forking the original project.  I'll see how can I contribute my work to Brendan's project.
+The visualization is done through Rhinoceros 3D:
+
+* One thread, one layer
+* One box per sample. Each box has user string with key "frame" and the actual
+  frame information as the value
+* coloring of the graph based on either set gradient, or randomized gradient per
+  thread (`--use-random-colors`)
+
+This script requires the latest version of `rhino3dm` and a recent Python 3
+installation. During the development 8.17.0b1 of `rhino3dm` was used with
+Python 3.11.7.
+
+This project is forked from https://github.com/vsapsai/FlameGraph-spindump which
+in turn is **heavily** inspired by remarkable
+[brendangregg/FlameGraph](https://github.com/brendangregg/FlameGraph).
+
+The code has been modernized to work with Python 3.
 
 ## Usage
-There is no proper CLI, you can use something like
 
-`python flamegraph.py test_data/Xcode_2013-08-30-203227_Volodymyrs-Mac-mini.hang > test.svg`
+The simplest form is:
 
-## See Also
-Most useful resources:
+`python flamegraph.py spindump.txt`
 
-* [http://dtrace.org/blogs/brendan/2011/12/16/flame-graphs/](http://dtrace.org/blogs/brendan/2011/12/16/flame-graphs/)
-* [https://github.com/brendangregg/FlameGraph](https://github.com/brendangregg/FlameGraph)
-* `man spindump`
-* `man sample`
+This generates a file called `flamegraph.3dm` in the current work directory. The
+width of the graph is 5000 model units by default. To specify a file to write to
+use `--output`:
 
-Other useful resources:
+`python flamegraph.py spindump.txt --output investigate.3dm`
 
-* [http://schani.wordpress.com/2012/11/16/flame-graphs-for-instruments/](http://schani.wordpress.com/2012/11/16/flame-graphs-for-instruments/)
-* [http://samsaffron.com/archive/2013/03/19/flame-graphs-in-ruby-miniprofiler](http://samsaffron.com/archive/2013/03/19/flame-graphs-in-ruby-miniprofiler)
-* [http://randomascii.wordpress.com/2013/03/26/summarizing-xperf-cpu-usage-with-flame-graphs/](http://randomascii.wordpress.com/2013/03/26/summarizing-xperf-cpu-usage-with-flame-graphs/)
+If you want a different sized graph use `--width` with an integer expressing the
+width in model units:
+
+`python flamegraph.py spindump.txt --output investigate.3dm --width 2500`
+
+Likewise the default sample height of 16 units can be changed using
+`--sample-height`
+
+`python flamegraph.py spindump.txt --output investigate.3dm --sample-height 20`

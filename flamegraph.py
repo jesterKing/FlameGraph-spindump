@@ -6,7 +6,6 @@ import random
 import re
 import sys
 from pathlib import Path
-from xml.sax import saxutils
 import argparse
 import statistics
 import rhino3dm
