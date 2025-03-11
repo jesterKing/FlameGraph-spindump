@@ -371,10 +371,10 @@ def main():
     report = TraceReport(lines)
 
     for idx, thread_trace in enumerate(report.process_trace.threads):
-        # build the flame graph model using the first thread
-        #thread_trace : ThreadTrace = report.process_trace.threads[0]
-
-        layer_idx = rf.Layers.AddLayer(f"Thread {idx}", (0, 0, 0, 0))
+        layer = rhino3dm.Layer()
+        layer.Name = f"Thread {idx}"
+        layer.Visible = idx == 0
+        layer_idx = rf.Layers.Add(layer)
 
         sample_height = args.sample_height
         total_width = args.width
@@ -419,7 +419,6 @@ def main():
             attr.ObjectColor = (clrgb.r, clrgb.g, clrgb.b, 255)
             attr.ColorSource = rhino3dm.ObjectColorSource.ColorFromObject
             attr.LayerIndex = layer_idx
-            attr.Visible = layer_idx == 0
             attr.SetUserString("frame", frame.frame)
             rf.Objects.AddExtrusion(extru, attr)
     # write out the 3dm file
