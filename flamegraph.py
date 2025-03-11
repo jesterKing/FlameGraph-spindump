@@ -9,13 +9,14 @@ from pathlib import Path
 from xml.sax import saxutils
 import argparse
 import statistics
+import rhino3dm
 
-parser = argparse.ArgumentParser(description='Generate flamegraph from spindump')
-parser.add_argument('filename', type=str, help='spindump file')
-parser.add_argument('--output', type=Path, help='output file, will overwrite if exists. If not given will write to spindump.svg in current work directory', default=Path.cwd() / 'spindump.svg')
-parser.add_argument('--width', type=int, default=2400, help='width of the flamegraph')
-parser.add_argument('--sample-height', type=float, default=16.0, help='height of each sample in the flamegraph')
-parser.add_argument('--use-avg-frame-len', action='store_true', help='use average frame length to calculate minimum width of a sample')
+parser = argparse.ArgumentParser(description='Generate flamegraph in Rhino 3dm format from text-based spindump')
+parser.add_argument('filename', type=str, help='spindump text file')
+parser.add_argument('--output', type=Path, help='output file, will overwrite if exists', default=Path.cwd() / 'flamegraph.3dm')
+parser.add_argument('--width', type=int, default=5000, help='width of the flamegraph in model units')
+parser.add_argument('--sample-height', type=float, default=16.0, help='height of each sample in the flamegraph in model units')
+parser.add_argument('--use-random-colors', action='store_true', help='use random colors for the rect gradient')
 
 
 class FrameSample:
@@ -153,53 +154,6 @@ def split_on_colon(lines):
         value = value.strip()
         result.append((header, value))
     return result
-
-
-class SVG:
-    _HEADER = """<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}"
-version="1.1" xmlns="http://www.w3.org/2000/svg">"""
-    _FOOTER = """</svg>"""
-    _SYMBOL_WIDTH = 5.7
-    _ELLIPSIS_WIDTH = 12.0
-
-    def __init__(self, width, height):
-        self.width = width
-        self.height = height
-        self.content_lines = []
-
-    def add_rect(self, x, y, width, height, color):
-        self.content_lines.append(
-            '<rect x="{x:.1f}" y="{y:.1f}" width="{width:.1f}" '
-            'height="{height:.1f}" fill="{color}" rx="2" ry="2" />'.format(
-                x=x, y=y, width=width, height=height, color=color))
-
-    def add_text(self, text, x, y):
-        text = saxutils.escape(text)
-        self.content_lines.append(
-            '<text x="{x:.1f}" y="{y:.1f}" font-size="12" '
-            'font-family="Helvetica">{text}</text>'.format(
-                x=x, y=y, text=text))
-
-    def add_bounded_text(self, text, x, y, width):
-        text_width = len(text) * SVG._SYMBOL_WIDTH
-        if text_width > width:
-            bounded_text_length = int((width - SVG._ELLIPSIS_WIDTH) / SVG._SYMBOL_WIDTH)
-            if bounded_text_length < 1:
-                # width is too small to display at least 1 symbol with ellipsis.
-                # Don't add any text.
-                return
-            else:
-                text = text[:bounded_text_length]
-                text += '\u2026'  # Add ellipsis
-        self.add_text(text, x, y)
-
-    def dump(self, stream):
-        """stream should support writing unicode strings."""
-        stream.write(self._HEADER.format(width=self.width, height=self.height))
-        stream.write("\n")
-        stream.write("\n".join(self.content_lines))
-        stream.write("\n")
-        stream.write(self._FOOTER)
 
 
 class Color:
@@ -399,14 +353,6 @@ class ColorGenerator:
         return "rgb({0}, {1}, {2})".format(r, g, b)
 
 
-class UnicodeToBinaryStreamWrapper:
-    def __init__(self, stream):
-        self.stream = stream
-
-    def write(self, unicode_str):
-        self.stream.write(unicode_str)
-
-
 def main():
     args = parser.parse_args()
 
@@ -418,41 +364,67 @@ def main():
         print(f"File {args.filename} does not exist")
         sys.exit(1)
 
+    # create the 3dm file to populate
+    rf = rhino3dm.File3dm()
+
+
     # Read and parse spindump.
     report = TraceReport(lines)
-    # Build SVG file.
-    thread_trace : ThreadTrace = report.process_trace.threads[0]
-    sample_height = args.sample_height
-    total_width = args.width
-    max_stack_depth = thread_trace.max_stack_depth()
-    height = sample_height * max_stack_depth
 
-    avg_str_len = thread_trace.avg_string_length()
+    for idx, thread_trace in enumerate(report.process_trace.threads):
+        # build the flame graph model using the first thread
+        #thread_trace : ThreadTrace = report.process_trace.threads[0]
 
-    min_sample_width = int(avg_str_len * SVG._SYMBOL_WIDTH + 0.5)
-    if args.use_avg_frame_len:
-        total_width = thread_trace.root_frame.sample_count * min_sample_width
+        layer_idx = rf.Layers.AddLayer(f"Thread {idx}", (0, 0, 0, 0))
 
-    svg = SVG(total_width, height)
+        sample_height = args.sample_height
+        total_width = args.width
+        width_per_sample = total_width / thread_trace.root_frame.sample_count
 
-    #color_generator = ColorGenerator((180, 115, 28), (25, 115, 28))
-    # color_interpolator = ColorInterpolator(Color.rgb(0xff, 0xed, 0xa0),
-    #                                        Color.rgb(0xf0, 0x3b, 0x20))
-    color_interpolator = ColorRectInterpolator(
-        Color.rgb(0xff, 0xed, 0xa0), Color.rgb(0xf0, 0x3b, 0x20),
-        Color.rgb(0xf7, 0xfc, 0xb9), Color.rgb(0x31, 0xa3, 0x54))
-    width_per_sample = total_width / thread_trace.root_frame.sample_count
-    # Draw samples' rectangles.
-    for frame, start, depth in thread_trace.root_frame.iteritems():
-        x = start * width_per_sample
-        y = height - depth * sample_height
-        width = frame.sample_count * width_per_sample
-        x_relative = float(x) / total_width
-        y_relative = float(depth) / max_stack_depth
-        color = color_interpolator.color_at_pos(x_relative, y_relative).rgb_string()
-        svg.add_rect(x, y - sample_height, width, sample_height - 1., color)
-        svg.add_bounded_text(frame.frame, x + 2., y - 4., width - 2.)
-    svg.dump(UnicodeToBinaryStreamWrapper(sys.stdout))
+        max_stack_depth = thread_trace.max_stack_depth()
+
+        if args.use_random_colors:
+            color_randomizer = ColorGenerator((128, 128, 128), (127, 127, 127))
+            left_bottom_color = color_randomizer.get_color_as_number()
+            left_top_color = color_randomizer.get_color_as_number()
+            right_bottom_color = color_randomizer.get_color_as_number()
+            right_top_color = color_randomizer.get_color_as_number()
+            color_interpolator = ColorRectInterpolator(
+                Color.rgb(*left_bottom_color), Color.rgb(*left_top_color),
+                Color.rgb(*right_bottom_color), Color.rgb(*right_top_color))
+        else:
+            color_interpolator = ColorRectInterpolator(
+                Color.rgb(0xff, 0xed, 0xa0), Color.rgb(0xf0, 0x3b, 0x20),
+                Color.rgb(0xf7, 0xfc, 0xb9), Color.rgb(0x31, 0xa3, 0x54))
+
+        # add boxes for samples
+        for frame, start, depth in thread_trace.root_frame.iteritems():
+            x = start * width_per_sample
+            y = depth * sample_height
+            width = frame.sample_count * width_per_sample
+            x_relative = float(x) / total_width
+            y_relative = float(depth) / max_stack_depth
+            cl = color_interpolator.color_at_pos(x_relative, y_relative)
+            clrgb = cl.as_rgb()
+            rect = rhino3dm.Polyline.CreateFromPoints(
+                [
+                    rhino3dm.Point3d(x, y, 0),
+                    rhino3dm.Point3d(x + width, y, 0),
+                    rhino3dm.Point3d(x + width, y + sample_height, 0),
+                    rhino3dm.Point3d(x, y + sample_height, 0),
+                    rhino3dm.Point3d(x, y, 0)
+                ]
+            ).ToNurbsCurve()
+            extru = rhino3dm.Extrusion.Create(rect, 200, True)
+            attr = rhino3dm.ObjectAttributes()
+            attr.ObjectColor = (clrgb.r, clrgb.g, clrgb.b, 255)
+            attr.ColorSource = rhino3dm.ObjectColorSource.ColorFromObject
+            attr.LayerIndex = layer_idx
+            attr.Visible = layer_idx == 0
+            attr.SetUserString("frame", frame.frame)
+            rf.Objects.AddExtrusion(extru, attr)
+    # write out the 3dm file
+    rf.Write(f"{args.output.resolve()}", 8)
 
 
 if __name__ == '__main__':
