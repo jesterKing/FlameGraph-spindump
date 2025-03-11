@@ -1,25 +1,34 @@
 #!/usr/bin/env python
-
-from __future__ import unicode_literals
+from typing import List
 from functools import reduce
 import operator
 import random
 import re
 import sys
+from pathlib import Path
 from xml.sax import saxutils
+import argparse
+import statistics
+
+parser = argparse.ArgumentParser(description='Generate flamegraph from spindump')
+parser.add_argument('filename', type=str, help='spindump file')
+parser.add_argument('--output', type=Path, help='output file, will overwrite if exists. If not given will write to spindump.svg in current work directory', default=Path.cwd() / 'spindump.svg')
+parser.add_argument('--width', type=int, default=2400, help='width of the flamegraph')
+parser.add_argument('--sample-height', type=float, default=16.0, help='height of each sample in the flamegraph')
+parser.add_argument('--use-avg-frame-len', action='store_true', help='use average frame length to calculate minimum width of a sample')
 
 
 class FrameSample:
     """Represents sampling results for a single frame within a thread trace."""
-    def __init__(self, frame, sample_count):
+    def __init__(self, frame : str, sample_count : int):
         self.frame = frame
         self.sample_count = sample_count
-        self.child_samples = []
+        self.child_samples : List['FrameSample'] = []
 
-    def add_child_sample(self, child_sample):
+    def add_child_sample(self, child_sample : 'FrameSample'):
         self.child_samples.append(child_sample)
 
-    def height(self):
+    def height(self) -> int:
         """Returns distance from current node to the most distant leaf node.
 
         If self is leaf node returns 1."""
@@ -48,10 +57,10 @@ class ThreadTrace:
     _INDENTATION = 2
     _DIGIT_RE = re.compile(r"\d+")
 
-    def __init__(self, trace_lines):
+    def __init__(self, trace_lines : List[str]):
         self.description = trace_lines[0].strip()
         self.root_frame = None
-        stack = []
+        stack : List[FrameSample] = []
         for trace_line in trace_lines[1:]:
             digit_match = self._DIGIT_RE.search(trace_line)
             assert digit_match is not None
@@ -62,8 +71,8 @@ class ThreadTrace:
                 # Shorten stack to appropriate level
                 stack = stack[:nested_level - 1]
             sample_count = int(trace_line[digit_match.start():digit_match.end()])
-            frame = trace_line[digit_match.end() + 1:]
-            frame_sample = FrameSample(frame, sample_count)
+            frame : str = trace_line[digit_match.end() + 1:]
+            frame_sample : FrameSample = FrameSample(frame, sample_count)
             if len(stack) > 0:
                 stack[-1].add_child_sample(frame_sample)
             else:
@@ -71,8 +80,15 @@ class ThreadTrace:
                 self.root_frame = frame_sample
             stack.append(frame_sample)
 
-    def max_stack_depth(self):
+    def max_stack_depth(self) -> int:
         return self.root_frame.height()
+
+    def max_string_length(self) -> int:
+        return max(len(frame.frame) for frame, _, _ in self.root_frame.iteritems())
+
+    def avg_string_length(self) -> float:
+        ls = [len(frame.frame) for frame, _, _ in self.root_frame.iteritems()]
+        return statistics.mean(ls)
 
 
 class ProcessTrace:
@@ -390,22 +406,35 @@ class UnicodeToBinaryStreamWrapper:
     def write(self, unicode_str):
         self.stream.write(unicode_str)
 
+
 def main():
-    factor = 200
+    args = parser.parse_args()
+
+    filename : Path = Path(args.filename)
+
+    if filename.exists():
+        lines = filename.read_text().splitlines()
+    else:
+        print(f"File {args.filename} does not exist")
+        sys.exit(1)
+
     # Read and parse spindump.
-    filename = sys.argv[1]
-    #filename = "test_data/Xcode_2013-08-30-203227_Volodymyrs-Mac-mini.hang"
-    lines = []
-    with open(filename, "rt") as f:
-        lines = f.read().splitlines()
     report = TraceReport(lines)
     # Build SVG file.
-    thread_trace = report.process_trace.threads[0]
-    sample_height = 16.
-    total_width = 1200*factor
+    thread_trace : ThreadTrace = report.process_trace.threads[0]
+    sample_height = args.sample_height
+    total_width = args.width
     max_stack_depth = thread_trace.max_stack_depth()
     height = sample_height * max_stack_depth
+
+    avg_str_len = thread_trace.avg_string_length()
+
+    min_sample_width = int(avg_str_len * SVG._SYMBOL_WIDTH + 0.5)
+    if args.use_avg_frame_len:
+        total_width = thread_trace.root_frame.sample_count * min_sample_width
+
     svg = SVG(total_width, height)
+
     #color_generator = ColorGenerator((180, 115, 28), (25, 115, 28))
     # color_interpolator = ColorInterpolator(Color.rgb(0xff, 0xed, 0xa0),
     #                                        Color.rgb(0xf0, 0x3b, 0x20))
@@ -424,6 +453,7 @@ def main():
         svg.add_rect(x, y - sample_height, width, sample_height - 1., color)
         svg.add_bounded_text(frame.frame, x + 2., y - 4., width - 2.)
     svg.dump(UnicodeToBinaryStreamWrapper(sys.stdout))
+
 
 if __name__ == '__main__':
     main()
