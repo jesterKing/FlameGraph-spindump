@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from __future__ import unicode_literals
+from functools import reduce
 import operator
 import random
 import re
@@ -56,7 +57,7 @@ class ThreadTrace:
             assert digit_match is not None
             indentation = digit_match.start()
             assert (indentation % self._INDENTATION) == 0, "Unexpected indentation in line %s" % trace_line
-            nested_level = indentation / self._INDENTATION
+            nested_level = indentation // self._INDENTATION
             if len(stack) >= nested_level:
                 # Shorten stack to appropriate level
                 stack = stack[:nested_level - 1]
@@ -90,7 +91,7 @@ class TraceReport:
     def __init__(self, lines):
         # Parse general report header (4 sections)
         self.report_attributes = []
-        for _ in range(4):
+        for _ in range(10):
             section, lines = take_until_empty_line(lines)
             section_attributes = split_on_colon(section)
             self.report_attributes.append(section_attributes)
@@ -128,6 +129,8 @@ def split_on_colon(lines):
     """Returns pairs of (header, value)."""
     result = []
     for line in lines:
+        if "---" in line or "Heavy format" in line:
+            continue
         split_result = line.split(":", 1)
         assert len(split_result) == 2, "Incorrect header: without a colon"
         header, value = split_result
@@ -322,6 +325,8 @@ class XYZColor(Color):
 
 
 def linear_interpolation(from_list, to_list, t):
+    from_list = list(from_list)
+    to_list = list(to_list)
     assert 0.0 <= t <= 1.0
     assert len(from_list) == len(to_list)
     t = float(t)
@@ -383,9 +388,10 @@ class UnicodeToBinaryStreamWrapper:
         self.stream = stream
 
     def write(self, unicode_str):
-        self.stream.write(unicode_str.encode('utf-8'))
+        self.stream.write(unicode_str)
 
 def main():
+    factor = 200
     # Read and parse spindump.
     filename = sys.argv[1]
     #filename = "test_data/Xcode_2013-08-30-203227_Volodymyrs-Mac-mini.hang"
@@ -396,7 +402,7 @@ def main():
     # Build SVG file.
     thread_trace = report.process_trace.threads[0]
     sample_height = 16.
-    total_width = 1200
+    total_width = 1200*factor
     max_stack_depth = thread_trace.max_stack_depth()
     height = sample_height * max_stack_depth
     svg = SVG(total_width, height)
